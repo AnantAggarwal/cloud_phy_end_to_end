@@ -1,25 +1,24 @@
 # Core app framework
-streamlit>=1.37.0
+streamlit
 
 # Computer vision & numerical stack
-opencv-python>=4.9.0
-numpy>=1.26.0
-pandas>=2.2.0
-pillow>=10.0.0
+opencv-python
+numpy
+pandas
+pillow
 
 # Deep learning
-torch>=2.1.0
-torchvision>=0.16.0
+torch
+torchvision
 
 # YOLO models (v8 + v11 support)
-ultralytics>=8.2.0
-
+ultralytics
 # OCR
-paddleocr>=2.7.0.3
+paddleocr
 
 # Optional: progress bars, etc.
-tqdm>=4.66.0
+tqdm
 
 # Environment management
-python-dotenv>=1.0.1
-paddlepaddle==2.6.1
+python-dotenv
+paddlepaddle
