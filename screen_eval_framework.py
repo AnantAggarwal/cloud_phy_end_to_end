@@ -163,22 +163,33 @@ class YOLOv11Localiser(Localiser):
             label = labels[cls_id] if cls_id in labels else f"class_{cls_id}"
             bboxes.append((int(x1), int(y1), int(x2), int(y2), label))
         return bboxes
+# ---------- Example OCR Implementation (PaddleOCR) ---------- #
+
 class PaddleOCROnly(OCRModel):
     """Simple OCR model using PaddleOCR in recognition-only mode."""
 
     def __init__(self, use_gpu=False):
         from paddleocr import PaddleOCR
-        self.model = PaddleOCR(lang='en')
+        # Initialize the model once
+        self.model = PaddleOCR(lang='en', use_gpu=use_gpu)
 
     def read(self, image, boxes):
         results = {}
         for (x1, y1, x2, y2, label) in boxes:
+            # Crop the image to the bounding box
             crop = image[y1:y2, x1:x2]
+            
+            # --- FIX: Removed the 'cls=False' argument ---
             rec = self.model.ocr(crop)
-            text = rec[0][0][0] if rec and rec[0] else ""
+            # ---------------------------------------------
+
+            # Extract text from the result structure
+            text = ""
+            if rec and rec[0]:
+                text = rec[0][0][0] # Get the text from the first result
+                
             results[label] = text
         return results
-
 
 # ---------- Core Evaluator ---------- #
 
