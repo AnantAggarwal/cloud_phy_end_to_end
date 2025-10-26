@@ -80,7 +80,7 @@ class PaddleOCROnly(OCRModel):
 
     def __init__(self, use_gpu=False):
         from paddleocr import PaddleOCR
-        self.model = PaddleOCR(det=False, lang='en')
+        self.model = PaddleOCR(lang='en')
 
     def read(self, image, boxes):
         results = {}
