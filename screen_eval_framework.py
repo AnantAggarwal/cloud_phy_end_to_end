@@ -61,18 +61,41 @@ class YOLOv8Segmenter(ScreenSegmenter):
             return image
 
         try:
-            # Get the 4 corner points for the largest box
-            # xyxyxyxy format from ultralytics: [top-left, top-right, bottom-right, bottom-left]
-            corners = obbs.xyxyxyxy.cpu().numpy()[idx]
-            src_pts = corners.astype(np.float32)
+            # --- HELPER FUNCTION TO SORT CORNERS ---
+            def order_points(pts):
+                # initialzie a list of coordinates that will be ordered
+                # such that the first entry in the list is the top-left,
+                # the second entry is the top-right, the third is the
+                # bottom-right, and the fourth is the bottom-left
+                rect = np.zeros((4, 2), dtype="float32")
+                
+                # the top-left point will have the smallest sum, whereas
+                # the bottom-right point will have the largest sum
+                s = pts.sum(axis=1)
+                rect[0] = pts[np.argmin(s)]
+                rect[2] = pts[np.argmax(s)]
+                
+                # now, compute the difference between the points, the
+                # top-right point will have the smallest difference,
+                # whereas the bottom-left will have the largest difference
+                diff = np.diff(pts, axis=1)
+                rect[1] = pts[np.argmin(diff)]
+                rect[3] = pts[np.argmax(diff)]
+                
+                # return the ordered coordinates
+                return rect
+            # ----------------------------------------
 
-            # Get the four corners
+            # Get the 4 corner points for the largest box
+            corners = obbs.xyxyxyxy.cpu().numpy()[idx]
+
+            # Order the points into [tl, tr, br, bl]
+            src_pts = order_points(corners.astype(np.float32))
+
+            # Unpack the ordered points
             (tl, tr, br, bl) = src_pts
 
-            # --- FIX: Calculate width and height from the corner points ---
-            # This is more robust than using the (w,h) from .xywhr,
-            # which might be swapped for vertical objects.
-
+            # --- Calculate width and height from the ORDERED points ---
             # Calculate the width of the new image (max of top/bottom edges)
             widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
             widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
@@ -86,8 +109,7 @@ class YOLOv8Segmenter(ScreenSegmenter):
             # -----------------------------------------------------------------
             
             # Define the destination points for the perspective warp
-            # We map the 4 source corners to a perfect rectangle of (maxWidth, maxHeight)
-            # The order MUST match the source points: [tl, tr, br, bl]
+            # This order MUST match the `order_points` output: [tl, tr, br, bl]
             dst_pts = np.array([
                 [0, 0],                     # Top-left
                 [maxWidth - 1, 0],          # Top-right
@@ -106,13 +128,10 @@ class YOLOv8Segmenter(ScreenSegmenter):
 
         except Exception as e:
             print(f"YOLOv8Segmenter: Error during OBB processing: {e}. Returning original image.")
-            # Fallback to simple crop using the bounding rectangle of the OBB
-            # This is less accurate but better than crashing
+            # Fallback to simple crop
             try:
-                # results[0].boxes.xyxy will give the non-rotated bounding box
                 boxes = results[0].boxes.xyxy.cpu().numpy()
                 if len(boxes) > 0:
-                    # Find the index of the largest non-rotated box
                     areas = [(x2 - x1) * (y2 - y1) for (x1, y1, x2, y2) in boxes]
                     idx = int(max(range(len(areas)), key=lambda i: areas[i]))
                     x1, y1, x2, y2 = boxes[idx]
