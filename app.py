@@ -5,6 +5,7 @@ import pandas as pd
 from PIL import Image
 from ultralytics import YOLO
 from paddleocr import PaddleOCR
+import torch
 
 # ---- Import components from your framework ----
 from screen_eval_framework import YOLOv8Segmenter, YOLOv11Localiser, PaddleOCROnly
@@ -33,10 +34,22 @@ USE_GPU = st.sidebar.checkbox("Use GPU (if available)", True)
 @st.cache_resource
 def load_models(segment_path, localise_path, use_gpu=True):
     """Load models once and cache them."""
-    device = "cuda" if use_gpu else "cpu"
+    
+    # Check if GPU is requested AND available
+    if use_gpu and torch.cuda.is_available():
+        device = "cuda"
+        gpu_for_paddle = True
+        st.sidebar.success("CUDA (GPU) device found!")
+    else:
+        device = "cpu"
+        gpu_for_paddle = False
+        if use_gpu: # If user wanted GPU but it's not available
+            st.sidebar.warning("CUDA not available. Falling back to CPU.")
+        
     segment_model = YOLOv8Segmenter(model_path=segment_path, conf=0.5, device=device)
     localise_model = YOLOv11Localiser(model_path=localise_path, conf=0.5, device=device)
-    ocr_model = PaddleOCROnly(use_gpu=use_gpu)
+    ocr_model = PaddleOCROnly(use_gpu=gpu_for_paddle)
+    
     return segment_model, localise_model, ocr_model
 
 

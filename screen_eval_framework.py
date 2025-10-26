@@ -4,6 +4,7 @@ import time
 import pandas as pd
 from pathlib import Path
 from typing import List, Dict, Any
+import torch  # <-- ADD THIS LINE
 
 from ultralytics import YOLO  # works for YOLOv8 & YOLOv11
 
@@ -34,12 +35,13 @@ class YOLOv8Segmenter(ScreenSegmenter):
     """Uses YOLOv8 to segment out screen region (cropping largest box)."""
 
     def __init__(self, model_path: str, conf: float = 0.5, device: str = "cuda"):
-        self.model = YOLO(model_path, device="cpu")
+        self.model = YOLO(model_path)  # <-- Load model without specifying device here
         self.conf = conf
         self.device = device
 
     def segment(self, image):
-        results = self.model.predict(image, conf=self.conf, verbose=False)
+        # Pass the device to the predict method, just like YOLOv11Localiser
+        results = self.model.predict(image, conf=self.conf, device=self.device, verbose=False) 
         boxes = results[0].boxes.xyxy.cpu().numpy()
         if len(boxes) == 0:
             return image  # fallback: no segmentation
@@ -49,8 +51,6 @@ class YOLOv8Segmenter(ScreenSegmenter):
         x1, y1, x2, y2 = boxes[idx]
         seg = image[int(y1):int(y2), int(x1):int(x2)]
         return seg
-
-
 class YOLOv11Localiser(Localiser):
     """Uses YOLOv11 to detect field regions inside screen."""
 
@@ -141,13 +141,19 @@ class ScreenEvaluator:
 
 # ---------- Example Run ---------- #
 if __name__ == "__main__":
+    
+    # Check for CUDA
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    use_gpu_for_paddle = True if device == "cuda" else False
+    print(f"Running models on device: {device}")
+
     # Paths to your trained weights
     SEGMENT_MODEL_PATH = "/kaggle/input/yolov8-screen-segmentation/best.pt"
     LOCALISE_MODEL_PATH = "/kaggle/input/yolov11-localisation/best.pt"
 
-    segment_model = YOLOv8Segmenter(model_path=SEGMENT_MODEL_PATH, conf=0.5, device="cuda")
-    localise_model = YOLOv11Localiser(model_path=LOCALISE_MODEL_PATH, conf=0.5, device="cuda")
-    ocr_model = PaddleOCROnly(use_gpu=True)
+    segment_model = YOLOv8Segmenter(model_path=SEGMENT_MODEL_PATH, conf=0.5, device=device)
+    localise_model = YOLOv11Localiser(model_path=LOCALISE_MODEL_PATH, conf=0.5, device=device)
+    ocr_model = PaddleOCROnly(use_gpu=use_gpu_for_paddle)
 
     evaluator = ScreenEvaluator(segment_model, localise_model, ocr_model)
     evaluator.run_on_directory(
