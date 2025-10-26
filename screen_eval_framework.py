@@ -78,9 +78,9 @@ class YOLOv11Localiser(Localiser):
 class PaddleOCROnly(OCRModel):
     """Simple OCR model using PaddleOCR in recognition-only mode."""
 
-    def __init__(self, use_gpu=True):
+    def __init__(self, use_gpu=False):
         from paddleocr import PaddleOCR
-        self.model = PaddleOCR(det=False, lang='en', use_gpu=use_gpu)
+        self.model = PaddleOCR(det=False, lang='en')
 
     def read(self, image, boxes):
         results = {}
