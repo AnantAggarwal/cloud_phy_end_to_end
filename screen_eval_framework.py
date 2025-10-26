@@ -39,7 +39,7 @@ class YOLOv8Segmenter(ScreenSegmenter):
         self.device = device
 
     def segment(self, image):
-        results = self.model.predict(image, conf=self.conf, device=self.device, verbose=False)
+        results = self.model.predict(image, conf=self.conf, device="cpu", verbose=False)
         boxes = results[0].boxes.xyxy.cpu().numpy()
         if len(boxes) == 0:
             return image  # fallback: no segmentation
