@@ -2,7 +2,7 @@
 streamlit
 
 # Computer vision & numerical stack
-opencv-python
+opencv-python-headless
 numpy
 pandas
 pillow
