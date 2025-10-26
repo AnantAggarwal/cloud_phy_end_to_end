@@ -61,35 +61,45 @@ class YOLOv8Segmenter(ScreenSegmenter):
             return image
 
         try:
-            # Get dimensions (w, h) and corner points for all boxes
-            # xywhr format: [center_x, center_y, width, height, angle_radians]
-            dimensions = obbs.xywhr.cpu().numpy()[:, 2:4]  # Get (width, height)
-            areas = dimensions[:, 0] * dimensions[:, 1]    # Calculate area
-            
-            # Find the index of the box with the largest area
-            idx = int(max(range(len(areas)), key=lambda i: areas[i]))
-
             # Get the 4 corner points for the largest box
-            # xyxyxyxy format: [top-left, top-right, bottom-right, bottom-left]
+            # xyxyxyxy format from ultralytics: [top-left, top-right, bottom-right, bottom-left]
             corners = obbs.xyxyxyxy.cpu().numpy()[idx]
-            
-            # Get the width and height for the largest box
-            w, h = dimensions[idx]
-
-            # Define the source and destination points for the perspective warp
             src_pts = corners.astype(np.float32)
+
+            # Get the four corners
+            (tl, tr, br, bl) = src_pts
+
+            # --- FIX: Calculate width and height from the corner points ---
+            # This is more robust than using the (w,h) from .xywhr,
+            # which might be swapped for vertical objects.
+
+            # Calculate the width of the new image (max of top/bottom edges)
+            widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+            widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+            maxWidth = max(int(widthA), int(widthB))
+
+            # Calculate the height of the new image (max of left/right edges)
+            heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+            heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+            maxHeight = max(int(heightA), int(heightB))
+            
+            # -----------------------------------------------------------------
+            
+            # Define the destination points for the perspective warp
+            # We map the 4 source corners to a perfect rectangle of (maxWidth, maxHeight)
+            # The order MUST match the source points: [tl, tr, br, bl]
             dst_pts = np.array([
-                [0, 0],         # Top-left
-                [w - 1, 0],     # Top-right
-                [w - 1, h - 1], # Bottom-right
-                [0, h - 1]      # Bottom-left
+                [0, 0],                     # Top-left
+                [maxWidth - 1, 0],          # Top-right
+                [maxWidth - 1, maxHeight - 1], # Bottom-right
+                [0, maxHeight - 1]          # Bottom-left
             ], dtype=np.float32)
 
             # Calculate the perspective transform matrix
             M = cv2.getPerspectiveTransform(src_pts, dst_pts)
             
             # Apply the warp
-            warped_img = cv2.warpPerspective(image, M, (int(w), int(h)))
+            warped_img = cv2.warpPerspective(image, M, (int(maxWidth), int(maxHeight)))
             
             print(f"YOLOv8Segmenter: Successfully warped OBB to {warped_img.shape[:2]}.")
             return warped_img
@@ -102,6 +112,9 @@ class YOLOv8Segmenter(ScreenSegmenter):
                 # results[0].boxes.xyxy will give the non-rotated bounding box
                 boxes = results[0].boxes.xyxy.cpu().numpy()
                 if len(boxes) > 0:
+                    # Find the index of the largest non-rotated box
+                    areas = [(x2 - x1) * (y2 - y1) for (x1, y1, x2, y2) in boxes]
+                    idx = int(max(range(len(areas)), key=lambda i: areas[i]))
                     x1, y1, x2, y2 = boxes[idx]
                     seg = image[int(y1):int(y2), int(x1):int(x2)]
                     print("YOLOv8Segmenter: Fallback to simple AABB crop.")
