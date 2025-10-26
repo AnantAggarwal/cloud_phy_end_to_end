@@ -80,7 +80,7 @@ if uploaded_file is not None:
     # ---- Step 1: Segmentation ----
     segmented = None
     with st.spinner("🔍 Running Step 1: Screen Segmentation..."):
-        segmented = segment_model.segment(segmented)
+        segmented = segment_model.segment(image_np)
     
     st.subheader("🔍 Step 1: Segmented Screen")
     st.image(cv2.cvtColor(segmented, cv2.COLOR_BGR2RGB), use_container_width=True)
@@ -89,7 +89,7 @@ if uploaded_file is not None:
     boxes = []
     vis_boxes_only = segmented.copy()
     with st.spinner("📍 Running Step 2: Localisation..."):
-        boxes = localise_model.localise(ima)
+        boxes = localise_model.localise(segmented)
 
     st.subheader("📍 Step 2: Localisation Results (Boxes)")
     if boxes:
