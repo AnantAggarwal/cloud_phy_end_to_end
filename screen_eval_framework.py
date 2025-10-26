@@ -34,12 +34,12 @@ class YOLOv8Segmenter(ScreenSegmenter):
     """Uses YOLOv8 to segment out screen region (cropping largest box)."""
 
     def __init__(self, model_path: str, conf: float = 0.5, device: str = "cuda"):
-        self.model = YOLO(model_path)
+        self.model = YOLO(model_path, device="cpu")
         self.conf = conf
         self.device = device
 
     def segment(self, image):
-        results = self.model.predict(image, conf=self.conf, device="cpu", verbose=False)
+        results = self.model.predict(image, conf=self.conf, verbose=False)
         boxes = results[0].boxes.xyxy.cpu().numpy()
         if len(boxes) == 0:
             return image  # fallback: no segmentation
