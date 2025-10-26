@@ -5,6 +5,7 @@ import pandas as pd
 from pathlib import Path
 from typing import List, Dict, Any
 import torch  # <-- ADD THIS LINE
+import numpy as np
 
 from ultralytics import YOLO  # works for YOLOv8 & YOLOv11
 
@@ -32,25 +33,83 @@ class OCRModel:
 # ---------- YOLO-based Implementations ---------- #
 
 class YOLOv8Segmenter(ScreenSegmenter):
-    """Uses YOLOv8 to segment out screen region (cropping largest box)."""
+    """
+    Uses YOLOv8 OBB (Oriented Bounding Box) to segment out screen region.
+    It finds the largest detected OBB and performs a perspective warp
+    to return a straightened, rectangular crop of the screen.
+    """
 
     def __init__(self, model_path: str, conf: float = 0.5, device: str = "cuda"):
-        self.model = YOLO(model_path)  # <-- Load model without specifying device here
+        self.model = YOLO(model_path)
         self.conf = conf
         self.device = device
+        print(f"YOLOv8Segmenter (OBB): Loaded {model_path} on {device} with conf={conf}")
 
     def segment(self, image):
-        # Pass the device to the predict method, just like YOLOv11Localiser
-        results = self.model.predict(image, conf=self.conf, device=self.device, verbose=False) 
-        boxes = results[0].boxes.xyxy.cpu().numpy()
-        if len(boxes) == 0:
-            return image  # fallback: no segmentation
-        # choose largest bbox (screen region)
-        areas = [(x2 - x1) * (y2 - y1) for (x1, y1, x2, y2) in boxes]
-        idx = int(max(range(len(areas)), key=lambda i: areas[i]))
-        x1, y1, x2, y2 = boxes[idx]
-        seg = image[int(y1):int(y2), int(x1):int(x2)]
-        return seg
+        results = self.model.predict(image, conf=self.conf, device=self.device, verbose=False)
+        
+        # Check if the 'obb' attribute exists and has results
+        if results[0].obb is None:
+            print(f"YOLOv8Segmenter: No OBB results found (results[0].obb is None) at conf={self.conf}. Returning original image.")
+            return image
+
+        obbs = results[0].obb
+        
+        # Check if any boxes were detected
+        if len(obbs) == 0:
+            print(f"YOLOv8Segmenter: No boxes found (len(obbs) == 0) at conf={self.conf}. Returning original image.")
+            return image
+
+        try:
+            # Get dimensions (w, h) and corner points for all boxes
+            # xywhr format: [center_x, center_y, width, height, angle_radians]
+            dimensions = obbs.xywhr.cpu().numpy()[:, 2:4]  # Get (width, height)
+            areas = dimensions[:, 0] * dimensions[:, 1]    # Calculate area
+            
+            # Find the index of the box with the largest area
+            idx = int(max(range(len(areas)), key=lambda i: areas[i]))
+
+            # Get the 4 corner points for the largest box
+            # xyxyxyxy format: [top-left, top-right, bottom-right, bottom-left]
+            corners = obbs.xyxyxyxy.cpu().numpy()[idx]
+            
+            # Get the width and height for the largest box
+            w, h = dimensions[idx]
+
+            # Define the source and destination points for the perspective warp
+            src_pts = corners.astype(np.float32)
+            dst_pts = np.array([
+                [0, 0],         # Top-left
+                [w - 1, 0],     # Top-right
+                [w - 1, h - 1], # Bottom-right
+                [0, h - 1]      # Bottom-left
+            ], dtype=np.float32)
+
+            # Calculate the perspective transform matrix
+            M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+            
+            # Apply the warp
+            warped_img = cv2.warpPerspective(image, M, (int(w), int(h)))
+            
+            print(f"YOLOv8Segmenter: Successfully warped OBB to {warped_img.shape[:2]}.")
+            return warped_img
+
+        except Exception as e:
+            print(f"YOLOv8Segmenter: Error during OBB processing: {e}. Returning original image.")
+            # Fallback to simple crop using the bounding rectangle of the OBB
+            # This is less accurate but better than crashing
+            try:
+                # results[0].boxes.xyxy will give the non-rotated bounding box
+                boxes = results[0].boxes.xyxy.cpu().numpy()
+                if len(boxes) > 0:
+                    x1, y1, x2, y2 = boxes[idx]
+                    seg = image[int(y1):int(y2), int(x1):int(x2)]
+                    print("YOLOv8Segmenter: Fallback to simple AABB crop.")
+                    return seg
+                else:
+                    return image
+            except Exception:
+                 return image # Final fallback
 class YOLOv11Localiser(Localiser):
     """Uses YOLOv11 to detect field regions inside screen."""
 
