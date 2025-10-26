@@ -61,6 +61,7 @@ class YOLOv11Localiser(Localiser):
 
     def localise(self, image) -> List[tuple]:
         results = self.model.predict(image, conf=self.conf, device=self.device, verbose=False)
+        print(results)
         det = results[0]
         boxes = det.boxes.xyxy.cpu().numpy()
         labels = det.names
