@@ -89,7 +89,7 @@ if uploaded_file is not None:
     boxes = []
     vis_boxes_only = segmented.copy()
     with st.spinner("📍 Running Step 2: Localisation..."):
-        boxes = localise_model.localise(segmented)
+        boxes = localise_model.localise(image_np)
 
     st.subheader("📍 Step 2: Localisation Results (Boxes)")
     if boxes:
