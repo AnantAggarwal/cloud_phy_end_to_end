@@ -4,7 +4,7 @@ import time
 import pandas as pd
 from pathlib import Path
 from typing import List, Dict, Any
-import torch  # <-- ADD THIS LINE
+import torch
 import numpy as np
 
 from ultralytics import YOLO  # works for YOLOv8 & YOLOv11
@@ -48,14 +48,12 @@ class YOLOv8Segmenter(ScreenSegmenter):
     def segment(self, image):
         results = self.model.predict(image, conf=self.conf, device=self.device, verbose=False)
         
-        # Check if the 'obb' attribute exists and has results
         if results[0].obb is None:
             print(f"YOLOv8Segmenter: No OBB results found (results[0].obb is None) at conf={self.conf}. Returning original image.")
             return image
 
         obbs = results[0].obb
         
-        # Check if any boxes were detected
         if len(obbs) == 0:
             print(f"YOLOv8Segmenter: No boxes found (len(obbs) == 0) at conf={self.conf}. Returning original image.")
             return image
@@ -86,22 +84,22 @@ class YOLOv8Segmenter(ScreenSegmenter):
                 return rect
             # ----------------------------------------
 
-            # Get the 4 corner points for the largest box
+            # Get dimensions and corner points for all boxes
+            dimensions = obbs.xywhr.cpu().numpy()[:, 2:4]  # Get (width, height)
+            areas = dimensions[:, 0] * dimensions[:, 1]    # Calculate area
+            idx = int(max(range(len(areas)), key=lambda i: areas[i]))
+
             corners = obbs.xyxyxyxy.cpu().numpy()[idx]
 
             # Order the points into [tl, tr, br, bl]
             src_pts = order_points(corners.astype(np.float32))
-
-            # Unpack the ordered points
             (tl, tr, br, bl) = src_pts
 
             # --- Calculate width and height from the ORDERED points ---
-            # Calculate the width of the new image (max of top/bottom edges)
             widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
             widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
             maxWidth = max(int(widthA), int(widthB))
 
-            # Calculate the height of the new image (max of left/right edges)
             heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
             heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
             maxHeight = max(int(heightA), int(heightB))
@@ -109,7 +107,6 @@ class YOLOv8Segmenter(ScreenSegmenter):
             # -----------------------------------------------------------------
             
             # Define the destination points for the perspective warp
-            # This order MUST match the `order_points` output: [tl, tr, br, bl]
             dst_pts = np.array([
                 [0, 0],                     # Top-left
                 [maxWidth - 1, 0],          # Top-right
@@ -142,6 +139,8 @@ class YOLOv8Segmenter(ScreenSegmenter):
                     return image
             except Exception:
                  return image # Final fallback
+
+
 class YOLOv11Localiser(Localiser):
     """Uses YOLOv11 to detect field regions inside screen."""
 
@@ -149,12 +148,22 @@ class YOLOv11Localiser(Localiser):
         self.model = YOLO(model_path)
         self.conf = conf
         self.device = device
+        print(f"YOLOv11Localiser: Loaded {model_path} on {device} with conf={conf}")
 
     def localise(self, image) -> List[tuple]:
         results = self.model.predict(image, conf=self.conf, device=self.device, verbose=False)
-        print(results)
         det = results[0]
+
+        if det.boxes is None:
+            print(f"YOLOv11Localiser: No boxes found at conf={self.conf}. Returning empty list.")
+            return []  # Return empty list if no boxes are found
+        
         boxes = det.boxes.xyxy.cpu().numpy()
+        
+        if len(boxes) == 0:
+            print(f"YOLOv11Localiser: No boxes found at conf={self.conf}. Returning empty list.")
+            return []  # Return empty list if no boxes are found
+
         labels = det.names
         classes = det.boxes.cls.cpu().numpy().astype(int)
 
@@ -162,7 +171,11 @@ class YOLOv11Localiser(Localiser):
         for (x1, y1, x2, y2, cls_id) in zip(boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3], classes):
             label = labels[cls_id] if cls_id in labels else f"class_{cls_id}"
             bboxes.append((int(x1), int(y1), int(x2), int(y2), label))
+            
+        print(f"YOLOv11Localiser: Found {len(bboxes)} boxes at conf={self.conf}.")
         return bboxes
+
+
 # ---------- Example OCR Implementation (PaddleOCR) ---------- #
 
 class PaddleOCROnly(OCRModel):
@@ -178,6 +191,11 @@ class PaddleOCROnly(OCRModel):
         for (x1, y1, x2, y2, label) in boxes:
             # Crop the image to the bounding box
             crop = image[y1:y2, x1:x2]
+
+            # Check if crop is valid (height and width > 0)
+            if crop.shape[0] == 0 or crop.shape[1] == 0:
+                results[label] = ""
+                continue
             
             # --- FIX: Removed the 'cls=False' argument ---
             rec = self.model.ocr(crop)
@@ -190,6 +208,7 @@ class PaddleOCROnly(OCRModel):
                 
             results[label] = text
         return results
+
 
 # ---------- Core Evaluator ---------- #
 
