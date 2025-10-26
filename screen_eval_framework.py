@@ -144,10 +144,6 @@ class YOLOv11Localiser(Localiser):
             label = labels[cls_id] if cls_id in labels else f"class_{cls_id}"
             bboxes.append((int(x1), int(y1), int(x2), int(y2), label))
         return bboxes
-
-
-# ---------- Example OCR Implementation (PaddleOCR) ---------- #
-
 class PaddleOCROnly(OCRModel):
     """Simple OCR model using PaddleOCR in recognition-only mode."""
 
