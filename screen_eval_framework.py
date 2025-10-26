@@ -1,24 +1,26 @@
-# screen_eval_framework.py
-
 import os
 import cv2
-import json
 import time
 import pandas as pd
 from pathlib import Path
-from typing import Callable, Dict, Any, List, Tuple
+from typing import List, Dict, Any
 
-# ---------- Interfaces (abstract stage signatures) ---------- #
+from ultralytics import YOLO  # works for YOLOv8 & YOLOv11
+
+
+# ---------- Base Classes ---------- #
 
 class ScreenSegmenter:
     def segment(self, image):
-        """Return a segmented/cleaned version of the screen image"""
+        """Return segmented/cleaned version of the screen image"""
         raise NotImplementedError
+
 
 class Localiser:
     def localise(self, image):
         """Return list of bounding boxes [(x1, y1, x2, y2, label), ...]"""
         raise NotImplementedError
+
 
 class OCRModel:
     def read(self, image, boxes):
@@ -26,30 +28,71 @@ class OCRModel:
         raise NotImplementedError
 
 
-# ---------- Example dummy implementations ---------- #
-# You can replace these later with your real models
+# ---------- YOLO-based Implementations ---------- #
 
-class IdentitySegmenter(ScreenSegmenter):
-    def segment(self, image): 
-        return image  # no change
+class YOLOv8Segmenter(ScreenSegmenter):
+    """Uses YOLOv8 to segment out screen region (cropping largest box)."""
 
-class DummyLocaliser(Localiser):
-    def localise(self, image):
-        h, w = image.shape[:2]
-        return [(0, 0, w, h, 'full_screen')]
+    def __init__(self, model_path: str, conf: float = 0.5, device: str = "cuda"):
+        self.model = YOLO(model_path)
+        self.conf = conf
+        self.device = device
 
-class TesseractOCR(OCRModel):
-    def __init__(self):
-        import pytesseract
-        self.pytesseract = pytesseract
+    def segment(self, image):
+        results = self.model.predict(image, conf=self.conf, device=self.device, verbose=False)
+        boxes = results[0].boxes.xyxy.cpu().numpy()
+        if len(boxes) == 0:
+            return image  # fallback: no segmentation
+        # choose largest bbox (screen region)
+        areas = [(x2 - x1) * (y2 - y1) for (x1, y1, x2, y2) in boxes]
+        idx = int(max(range(len(areas)), key=lambda i: areas[i]))
+        x1, y1, x2, y2 = boxes[idx]
+        seg = image[int(y1):int(y2), int(x1):int(x2)]
+        return seg
+
+
+class YOLOv11Localiser(Localiser):
+    """Uses YOLOv11 to detect field regions inside screen."""
+
+    def __init__(self, model_path: str, conf: float = 0.5, device: str = "cuda"):
+        self.model = YOLO(model_path)
+        self.conf = conf
+        self.device = device
+
+    def localise(self, image) -> List[tuple]:
+        results = self.model.predict(image, conf=self.conf, device=self.device, verbose=False)
+        det = results[0]
+        boxes = det.boxes.xyxy.cpu().numpy()
+        labels = det.names
+        classes = det.boxes.cls.cpu().numpy().astype(int)
+
+        bboxes = []
+        for (x1, y1, x2, y2, cls_id) in zip(boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3], classes):
+            label = labels[cls_id] if cls_id in labels else f"class_{cls_id}"
+            bboxes.append((int(x1), int(y1), int(x2), int(y2), label))
+        return bboxes
+
+
+# ---------- Example OCR Implementation (PaddleOCR) ---------- #
+
+class PaddleOCROnly(OCRModel):
+    """Simple OCR model using PaddleOCR in recognition-only mode."""
+
+    def __init__(self, use_gpu=True):
+        from paddleocr import PaddleOCR
+        self.model = PaddleOCR(det=False, lang='en', use_gpu=use_gpu)
+
     def read(self, image, boxes):
         results = {}
-        for (x1,y1,x2,y2,label) in boxes:
+        for (x1, y1, x2, y2, label) in boxes:
             crop = image[y1:y2, x1:x2]
-            txt = self.pytesseract.image_to_string(crop).strip()
-            results[label] = txt
+            rec = self.model.ocr(crop, det=False, rec=True)
+            text = rec[0][0][0] if rec and rec[0] else ""
+            results[label] = text
         return results
 
+
+# ---------- Core Evaluator ---------- #
 
 class ScreenEvaluator:
     def __init__(self, segment_model: ScreenSegmenter,
@@ -67,10 +110,13 @@ class ScreenEvaluator:
         result = {"image": img_path}
         t0 = time.time()
         try:
+            # Step 1: Screen segmentation
             seg = self.segment_model.segment(image)
 
+            # Step 2: Localisation
             boxes = self.localise_model.localise(seg)
 
+            # Step 3: OCR
             ocr_out = self.ocr_model.read(seg, boxes)
             result.update(ocr_out)
             result["num_boxes"] = len(boxes)
@@ -81,7 +127,7 @@ class ScreenEvaluator:
         return result
 
     def run_on_directory(self, image_dir: str, output_csv: str):
-        paths = sorted(list(Path(image_dir).glob("*.jpg")) + 
+        paths = sorted(list(Path(image_dir).glob("*.jpg")) +
                        list(Path(image_dir).glob("*.png")))
         rows = []
         for i, p in enumerate(paths):
@@ -90,16 +136,21 @@ class ScreenEvaluator:
             print(f"[{i+1}/{len(paths)}] {p.name} done in {out['time_sec']}s")
         df = pd.DataFrame(rows)
         df.to_csv(output_csv, index=False)
-        print(f"\nSaved results → {output_csv}")
+        print(f"\n✅ Results saved to {output_csv}")
 
 
+# ---------- Example Run ---------- #
 if __name__ == "__main__":
-    segment_model = IdentitySegmenter()
-    localise_model = DummyLocaliser()
-    ocr_model = TesseractOCR()
+    # Paths to your trained weights
+    SEGMENT_MODEL_PATH = "/kaggle/input/yolov8-screen-segmentation/best.pt"
+    LOCALISE_MODEL_PATH = "/kaggle/input/yolov11-localisation/best.pt"
+
+    segment_model = YOLOv8Segmenter(model_path=SEGMENT_MODEL_PATH, conf=0.5, device="cuda")
+    localise_model = YOLOv11Localiser(model_path=LOCALISE_MODEL_PATH, conf=0.5, device="cuda")
+    ocr_model = PaddleOCROnly(use_gpu=True)
 
     evaluator = ScreenEvaluator(segment_model, localise_model, ocr_model)
     evaluator.run_on_directory(
         image_dir="/kaggle/input/segmented-screens", 
-        output_csv="/kaggle/working/results.csv"
+        output_csv="/kaggle/working/eval_results.csv"
     )
