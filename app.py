@@ -29,10 +29,18 @@ LOCALISE_MODEL_PATH = st.sidebar.text_input(
 )
 USE_GPU = st.sidebar.checkbox("Use GPU (if available)", True)
 
+CONF_THRESHOLD = st.sidebar.slider(
+    "Confidence Threshold", 
+    min_value=0.05, 
+    max_value=1.0, 
+    value=0.5, 
+    step=0.05
+)
+
 
 # ---- Model Initialization ----
 @st.cache_resource
-def load_models(segment_path, localise_path, use_gpu=True):
+def load_models(segment_path, localise_path, conf_threshold, use_gpu=True):
     """Load models once and cache them."""
     
     # Check if GPU is requested AND available
@@ -46,15 +54,15 @@ def load_models(segment_path, localise_path, use_gpu=True):
         if use_gpu: # If user wanted GPU but it's not available
             st.sidebar.warning("CUDA not available. Falling back to CPU.")
         
-    segment_model = YOLOv8Segmenter(model_path=segment_path, conf=0.5, device=device)
-    localise_model = YOLOv11Localiser(model_path=localise_path, conf=0.5, device=device)
+    segment_model = YOLOv8Segmenter(model_path=segment_path, conf=conf_threshold, device=device)
+    localise_model = YOLOv11Localiser(model_path=localise_path, conf=conf_threshold, device=device)
     ocr_model = PaddleOCROnly(use_gpu=gpu_for_paddle)
     
     return segment_model, localise_model, ocr_model
 
 
 segment_model, localise_model, ocr_model = load_models(
-    SEGMENT_MODEL_PATH, LOCALISE_MODEL_PATH, USE_GPU
+    SEGMENT_MODEL_PATH, LOCALISE_MODEL_PATH, CONF_THRESHOLD, USE_GPU
 )
 
 
@@ -74,25 +82,34 @@ if uploaded_file is not None:
         # Step 2: Localisation
         boxes = localise_model.localise(segmented)
 
+        # --- Create visualization for Localisation ONLY ---
+        vis_boxes_only = segmented.copy()
+        for (x1, y1, x2, y2, label) in boxes:
+            cv2.rectangle(vis_boxes_only, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(vis_boxes_only, label, (x1, max(y1 - 10, 20)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        # ----------------------------------------------------
+
         # Step 3: OCR
         ocr_results = ocr_model.read(segmented, boxes)
 
-        # Visualization
-        vis = segmented.copy()
+        # --- Create Combined Visualization (Boxes + OCR Text) ---
+        vis_combined = segmented.copy()
         for (x1, y1, x2, y2, label) in boxes:
             text = ocr_results.get(label, "")
-            cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(vis, f"{label}: {text}", (x1, max(y1 - 10, 20)),
+            cv2.rectangle(vis_combined, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(vis_combined, f"{label}: {text}", (x1, max(y1 - 10, 20)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        # --------------------------------------------------------
 
     # ---- Display results ----
-    st.subheader("🔍 Segmented Screen")
+    st.subheader("🔍 Step 1: Segmented Screen")
     st.image(cv2.cvtColor(segmented, cv2.COLOR_BGR2RGB), use_container_width=True)
 
-    st.subheader("📍 Localisation + OCR Results")
-    st.image(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB), use_container_width=True)
+    st.subheader("📍 Step 2: Localisation Results (Boxes)")
+    st.image(cv2.cvtColor(vis_boxes_only, cv2.COLOR_BGR2RGB), use_container_width=True)
 
-    st.subheader("🧾 Extracted Values")
+    st.subheader("🧾 Step 3: OCR Results (Table)")
     if ocr_results:
         df = pd.DataFrame(list(ocr_results.items()), columns=["Field", "Value"])
         st.table(df)
@@ -102,6 +119,9 @@ if uploaded_file is not None:
     else:
         st.warning("No readable text detected.")
 
+    st.subheader("✅ Combined Result (Localisation + OCR)")
+    st.image(cv2.cvtColor(vis_combined, cv2.COLOR_BGR2RGB), use_container_width=True)
+    
     st.success("✅ Processing complete!")
 
 else:
