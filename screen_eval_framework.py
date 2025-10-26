@@ -159,7 +159,7 @@ class PaddleOCROnly(OCRModel):
         results = {}
         for (x1, y1, x2, y2, label) in boxes:
             crop = image[y1:y2, x1:x2]
-            rec = self.model.ocr(crop, cls=False)
+            rec = self.model.ocr(crop)
             text = rec[0][0][0] if rec and rec[0] else ""
             results[label] = text
         return results
