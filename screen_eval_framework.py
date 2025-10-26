@@ -178,13 +178,15 @@ class YOLOv11Localiser(Localiser):
 
 # ---------- Example OCR Implementation (PaddleOCR) ---------- #
 
+# ---------- Example OCR Implementation (PaddleOCR) ---------- #
+
 class PaddleOCROnly(OCRModel):
     """Simple OCR model using PaddleOCR in recognition-only mode."""
 
     def __init__(self, use_gpu=False):
         from paddleocr import PaddleOCR
         # Initialize the model once
-        self.model = PaddleOCR(lang='en')
+        self.model = PaddleOCR(lang='en', use_gpu=use_gpu)
 
     def read(self, image, boxes):
         results = {}
@@ -197,16 +199,22 @@ class PaddleOCROnly(OCRModel):
                 results[label] = ""
                 continue
             
-            # --- FIX: Removed the 'cls=False' argument ---
+            # --- FIX: Call OCR ---
             rec = self.model.ocr(crop)
-            # ---------------------------------------------
+            # rec is [ [line1, line2, ...] ] or [None]
 
-            # Extract text from the result structure
-            text = ""
+            text_lines = []
+            
+            # Check if rec is valid AND rec[0] is valid (not None or [])
             if rec and rec[0]:
-                text = rec[0][0][0] # Get the text from the first result
-                
-            results[label] = text
+                for line in rec[0]:
+                    # line is [[box], (text, conf)]
+                    # We get the text, which is at index 1, and sub-index 0
+                    text_lines.append(line[1][0]) 
+            
+            # Join all found lines with a space (handles multi-line values)
+            results[label] = " ".join(text_lines)
+            
         return results
 
 
